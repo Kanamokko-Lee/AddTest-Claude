@@ -651,6 +651,7 @@ async function doFixAllDay(){
 }
 
 
+async function confirmOffLeaveMigration(){
   const selected = offLeaveCandidates.filter((_,i) => document.getElementById(`ol_${i}`)?.checked);
   if(selected.length === 0){ showToast('選択された予定がありません'); return; }
 
