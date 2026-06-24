@@ -175,6 +175,9 @@ main{padding:12px 16px 100px;max-width:640px;margin:0 auto}
   <button class="sync-btn" id="offleave-btn" onclick="startOffLeaveMigration()" style="margin-top:8px;background:var(--green-dim);color:var(--green);border-color:rgba(52,199,138,0.4)">
     🏖 OFF・leave予定を「1休日」へ移動
   </button>
+  <button class="sync-btn" id="fixallday-btn" onclick="startFixAllDay()" style="margin-top:8px;background:var(--amber-dim);color:var(--amber);border-color:rgba(245,166,35,0.4)">
+    🛠 「1休日」内のOFF・leaveを終日に修正
+  </button>
 </div>
 
 <!-- OFF/leave 移動結果 -->
@@ -443,6 +446,7 @@ function initGis(){
       if(pendingAction === 'fetch') await doFetch();
       else if(pendingAction === 'register') await doRegisterAll();
       else if(pendingAction === 'offleave') await doOffLeaveSearch();
+      else if(pendingAction === 'fixallday') await doFixAllDay();
       pendingAction = null;
     }
   });
@@ -485,6 +489,7 @@ async function withAuth(action){
     if(action === 'fetch') await doFetch();
     else if(action === 'register') await doRegisterAll();
     else if(action === 'offleave') await doOffLeaveSearch();
+    else if(action === 'fixallday') await doFixAllDay();
     return;
   }
 
@@ -579,7 +584,73 @@ function closeOffLeavePanel(){
   offLeaveCandidates = [];
 }
 
-async function confirmOffLeaveMigration(){
+function pad2(n){ return String(n).padStart(2,'0'); }
+function ymd(d){ return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth()+1)}-${pad2(d.getUTCDate())}`; }
+
+// 既存の開始・終了（all-day or timed）から、終日イベント用の date 文字列範囲を算出
+// Google Calendarの終日イベントの end.date は「排他的」(実際の最終日+1日)
+function toAllDayRange(startStr, endStr, wasAllDay){
+  if(wasAllDay){
+    return { startDate: startStr.slice(0,10), endDate: endStr.slice(0,10) };
+  }
+  const s = new Date(startStr);
+  const e = new Date(endStr);
+  const startDate = ymd(s);
+  const endDateOnly = ymd(e);
+  let endDate;
+  if(endDateOnly === startDate){
+    const next = new Date(s); next.setUTCDate(next.getUTCDate()+1);
+    endDate = ymd(next);
+  } else {
+    endDate = endDateOnly;
+  }
+  return { startDate, endDate };
+}
+
+/* ══ 1休日内のOFF/leaveを終日修正 ══ */
+function startFixAllDay(){ withAuth('fixallday'); }
+
+async function doFixAllDay(){
+  showToast('「1休日」内のOFF・leave予定を確認中...');
+  try {
+    const timeMin = rangeFrom ? rangeFrom.toISOString() : new Date(Date.now()-2*24*3600*1000).toISOString();
+    const timeMax = rangeTo   ? rangeTo.toISOString()   : new Date(Date.now()+90*24*3600*1000).toISOString();
+
+    const res = await gapi.client.calendar.events.list({
+      calendarId: OFF_LEAVE_CAL_ID, timeMin, timeMax, singleEvents: true, orderBy: 'startTime', maxResults: 250
+    });
+
+    const items = (res.result.items || []).filter(item => {
+      const isTimed = !!item.start.dateTime; // dateTime形式＝終日ではない
+      return isTimed && /off|leave/i.test(item.summary || '');
+    });
+
+    if(items.length === 0){
+      showToast('終日に修正が必要な予定はありませんでした');
+      return;
+    }
+
+    let success = 0, fail = 0;
+    for(const item of items){
+      try {
+        const { startDate, endDate } = toAllDayRange(item.start.dateTime, item.end.dateTime, false);
+        await gapi.client.calendar.events.patch({
+          calendarId: OFF_LEAVE_CAL_ID,
+          eventId: item.id,
+          resource: { start: { date: startDate }, end: { date: endDate } }
+        });
+        success++;
+      } catch(e){ console.error(e); fail++; }
+    }
+    showToast(`${success}件を終日に修正しました${fail>0?`（失敗:${fail}件）`:''} ✓`);
+  } catch(e){
+    const msg = e.result?.error?.message || e.message || JSON.stringify(e);
+    showToast('修正失敗: ' + msg);
+    console.error(e);
+  }
+}
+
+
   const selected = offLeaveCandidates.filter((_,i) => document.getElementById(`ol_${i}`)?.checked);
   if(selected.length === 0){ showToast('選択された予定がありません'); return; }
 
@@ -589,19 +660,16 @@ async function confirmOffLeaveMigration(){
   let success = 0, fail = 0;
   for(const ev of selected){
     try {
-      // 1休日カレンダーに新規作成
+      // 1休日カレンダーに新規作成（常に終日イベントとして登録）
       const resource = {
         summary: ev.summary,
         description: ev.description,
         location: ev.location
       };
-      if(ev.isAllDay){
-        resource.start = { date: ev.start.slice(0,10) };
-        resource.end   = { date: ev.end.slice(0,10) };
-      } else {
-        resource.start = { dateTime: ev.start };
-        resource.end   = { dateTime: ev.end };
-      }
+      const { startDate, endDate } = toAllDayRange(ev.start, ev.end, ev.isAllDay);
+      resource.start = { date: startDate };
+      resource.end   = { date: endDate };
+
       await gapi.client.calendar.events.insert({ calendarId: OFF_LEAVE_CAL_ID, resource });
       // 元のイベントを削除
       await gapi.client.calendar.events.delete({ calendarId: ev.sourceCalId, eventId: ev.id });
