@@ -589,21 +589,17 @@ function ymd(d){ return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth()+1)}-${pad2
 
 // 既存の開始・終了（all-day or timed）から、終日イベント用の date 文字列範囲を算出
 // Google Calendarの終日イベントの end.date は「排他的」(実際の最終日+1日)
+// 時刻付き(dateTime)の場合は UTC→JST(+9h) 変換した上で日付を確定する
+// (例: UTC 15:00開始 → JST 00:00 = 翌日の00:00 となるため、開始日は+1日)
 function toAllDayRange(startStr, endStr, wasAllDay){
   if(wasAllDay){
     return { startDate: startStr.slice(0,10), endDate: endStr.slice(0,10) };
   }
-  const s = new Date(startStr);
-  const e = new Date(endStr);
-  const startDate = ymd(s);
-  const endDateOnly = ymd(e);
-  let endDate;
-  if(endDateOnly === startDate){
-    const next = new Date(s); next.setUTCDate(next.getUTCDate()+1);
-    endDate = ymd(next);
-  } else {
-    endDate = endDateOnly;
-  }
+  const sUTC = new Date(startStr);
+  const sJST = new Date(sUTC.getTime() + 9*3600000); // JSTに変換してから日付を取る
+  const startDate = ymd(sJST);
+  const next = new Date(sJST); next.setUTCDate(next.getUTCDate()+1);
+  const endDate = ymd(next); // 終日イベントは1日分、end.dateは開始日の翌日（排他的）
   return { startDate, endDate };
 }
 
