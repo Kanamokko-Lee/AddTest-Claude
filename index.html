@@ -864,18 +864,27 @@ async function doFixAllDay(){
         calendarId: calId, timeMin, timeMax, singleEvents: true, orderBy: 'startTime', maxResults: 250
       });
       const standbyItems = (res2.result.items || []).filter(item => {
-        const isTimed = !!item.start.dateTime;
         const isStandby = /standby/i.test(item.summary || '');
         const hasFOR = /FO\s*R\b/i.test(item.description || '');
-        return isTimed && isStandby && hasFOR;
+        const alreadyR = item.summary === 'R';
+        return isStandby && hasFOR && !alreadyR;
       });
       for(const item of standbyItems){
         try {
-          const startUTC = new Date(item.start.dateTime);
-          const jstStart = new Date(startUTC.getTime() + 9*3600000);
-          const startDate = ymd(jstStart);
-          const next = new Date(jstStart); next.setUTCDate(next.getUTCDate()+1);
-          const endDate = ymd(next);
+          const isTimed = !!item.start.dateTime;
+          let startDate, endDate;
+          if(isTimed){
+            // 時間指定 → JST変換して終日の日付を算出
+            const startUTC = new Date(item.start.dateTime);
+            const jstStart = new Date(startUTC.getTime() + 9*3600000);
+            startDate = ymd(jstStart);
+            const next = new Date(jstStart); next.setUTCDate(next.getUTCDate()+1);
+            endDate = ymd(next);
+          } else {
+            // 既に終日 → 日付はそのまま使い、件名だけ変更
+            startDate = item.start.date;
+            endDate = item.end.date;
+          }
           const resource = {
             summary: 'R', description: item.description || '', location: item.location || '',
             start: { date: startDate }, end: { date: endDate }
@@ -890,9 +899,9 @@ async function doFixAllDay(){
     }
 
     if(success === 0 && fail === 0){
-      showToast('終日に修正が必要な予定はありませんでした');
+      showToast('修正が必要な予定はありませんでした');
     } else {
-      showToast(`${success}件を終日に修正しました${fail>0?`（失敗:${fail}件）`:''} ✓`);
+      showToast(`${success}件を修正しました${fail>0?`（失敗:${fail}件）`:''} ✓`);
     }
   } catch(e){
     const msg = e.result?.error?.message || e.message || JSON.stringify(e);
