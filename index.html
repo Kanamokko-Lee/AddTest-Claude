@@ -877,7 +877,7 @@ async function doFixAllDay(){
           const next = new Date(jstStart); next.setUTCDate(next.getUTCDate()+1);
           const endDate = ymd(next);
           const resource = {
-            summary: item.summary, description: item.description || '', location: item.location || '',
+            summary: 'R', description: item.description || '', location: item.location || '',
             start: { date: startDate }, end: { date: endDate }
           };
           await gapi.client.request({
